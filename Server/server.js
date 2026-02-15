@@ -18,7 +18,41 @@ app.use(helmet()); //adds various http headers to protect the app
 app.use(morgan("dev")); //log the requests to the console
 app.use(express.json()); //parse json data
 app.use(cors());
+//applying arc-jet rate limit to all routes
+app.use(async (req, res, next) => {
+  try {
+    const decision = await aj.protect(req, {
+      requested: 1, //specifies that each request will consume 1 token
+    });
+    console.log("Arcjet decision", decision);
 
+    if (decision.isDenied()) {
+      if (decision.reason.isRateLimit()) {
+        res.status(429).json({ error: "too many request" });
+      } else if (decision.reason.isBot()) {
+        res.status(403).json({ errro: "bot access denied" });
+      } else {
+        res.status(403).json({ error: "Forbidden" });
+      }
+      return;
+    }
+
+    //check for spoofed bots
+    if (
+      decision.results.some(
+        (result) => result.reason.isBot() && result.reason.isSpoofed(),
+      )
+    ) {
+      res.status(403).json({ error: "Spoofed bot detected" });
+      return;
+    }
+
+    next();
+  } catch (error) {
+    console.log("Arcjet error", error);
+    next(error);
+  }
+});
 app.get("/test", (req, res) => {
   res.send("hello from the server");
   console.log(res.getHeaders());
